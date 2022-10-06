@@ -16,90 +16,258 @@ contract DummyERC20 is ERC20 {
     }
 }
 
-contract SimpleSafuTest is Test {
-    IERC20 erc20;
+contract SafuTest is Test {
+    address erc20;
 
     uint256 defaultBountyCap = 1000;
-    uint256 minDelay = 10;
-    uint256 maxDelay = 20;
-    uint8 bountyPercent = 50;
+    uint256 defaultMinDelay = 0;
+    uint256 defaultMaxDelay = 20;
+    uint256 defaultDenialWindow = 10;
+    uint8 defaultBountyPercent = 50;
 
-    event Deposit(address indexed depositor, SimpleSafu.Receipt receipt);
+    event Deposit(address indexed depositor, Safu.Receipt receipt);
 
     function setUp() public {
         DummyERC20 _erc20 = new DummyERC20("testERC20", "TBD");
         _erc20.mint(address(this), 1_000_000);
-        erc20 = _erc20;
+        erc20 = address(_erc20);
     }
 
     function testDepositClaimSuccess() public {
-        SimpleSafu safu = new SimpleSafu(
+        Safu safu = new Safu(
             defaultBountyCap,
-            minDelay,
-            maxDelay,
-            bountyPercent,
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
             true,
             false,
             address(this)
         );
-        assertTrue(erc20.approve(address(safu), 1_000));
-        uint64 id = safu.deposit(address(erc20), 1_000);
+        assertTrue(IERC20(erc20).approve(address(safu), 1_000));
+        uint64 id = safu.deposit(erc20, 1_000);
         // todo: understand why this fails even though the output looks identical
         // vm.expectEmit(true, false, false, true);
         // emit Deposit(
         //     address(this),
-        //     SimpleSafu.Receipt(0, erc20, 500, block.timestamp, false)
+        //     Safu.Receipt(0, erc20, 500, block.timestamp, false)
         // );
         assertEq(safu.getTokenToBountyCap(erc20), defaultBountyCap);
         assertBounty(safu, id, 500, false);
 
-        safu.approveBounty(address(this), id);
+        safu.approveBounty(id);
 
         assertBounty(safu, id, 500, true);
-        uint256 prev = erc20.balanceOf(address(this));
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
         safu.claim();
-        assertEq(erc20.balanceOf(address(this)), prev + 500);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
     }
 
     function testApprovalsGreaterThanCap() public {
-        SimpleSafu safu = new SimpleSafu(
+        SafuLike safu = new Safu(
             defaultBountyCap,
-            minDelay,
-            maxDelay,
-            bountyPercent,
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
             true,
             false,
             address(this)
         );
-        assertTrue(erc20.approve(address(safu), 10_000));
-        uint64 id1 = safu.deposit(address(erc20), 1_000);
-        safu.approveBounty(address(this), id1);
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id1 = safu.deposit(erc20, 1_000);
+        safu.approveBounty(id1);
         assertBounty(safu, id1, 500, true);
-        uint256 prev = erc20.balanceOf(address(this));
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
         safu.claim();
-        assertEq(erc20.balanceOf(address(this)), prev + 500);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
 
-        uint64 id2 = safu.deposit(address(erc20), 1_000);
-        safu.approveBounty(address(this), id2);
+        uint64 id2 = safu.deposit(erc20, 1_000);
+        safu.approveBounty(id2);
         assertBounty(safu, id2, 500, true);
 
-        uint64 id3 = safu.deposit(address(erc20), 1_000);
-        safu.approveBounty(address(this), id3);
+        uint64 id3 = safu.deposit(erc20, 3_000);
 
-        // approved is 1500, but cap is 1000 and 500 already claimed
-        // split remaining 500 between receipts fairly  
-        assertBounty(safu, id2, 250, true);
-        assertBounty(safu, id3, 250, true);
+        // un-approved deposit has no effect on existing approved deposits
+        assertBounty(safu, id2, 500, true);
 
-        prev = erc20.balanceOf(address(this));
+        safu.approveBounty(id3);
+
+        // approved is 4000, but cap is 1000 and 500 already claimed
+        // split remaining 500 between receipts fairly
+        assertBounty(safu, id2, 125, true);
+        assertBounty(safu, id3, 375, true);
+
+        prev = IERC20(erc20).balanceOf(address(this));
         safu.claim();
-        assertEq(erc20.balanceOf(address(this)), prev + 500);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
+    }
 
-        // deposit when no remaining 
+    function testNoCapacityLeft() public {
+        SafuLike safu = new Safu(
+            defaultBountyCap,
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
+            true,
+            false,
+            address(this)
+        );
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id = safu.deposit(erc20, 2_000);
+        safu.approveBounty(id);
+        assertBounty(safu, id, 1000, true);
+
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 1000);
+
+        // deposit when no remaining
+        uint64 id2 = safu.deposit(erc20, 1_000);
+        safu.approveBounty(id2);
+        assertBounty(safu, id2, 0, true);
+
+        prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+    }
+
+    function testMinDelay() public {
+        uint256 minDelay = 10;
+        SafuLike safu = new Safu(
+            defaultBountyCap,
+            minDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
+            true,
+            false,
+            address(this)
+        );
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id = safu.deposit(erc20, 2_000);
+        safu.approveBounty(id);
+        assertBounty(safu, id, 1000, true);
+
+        // cannot claim until minDelay elapsed
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        vm.warp(block.timestamp + minDelay);
+
+        // now can claim
+        prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 1000);
+    }
+
+    function testDenialWindow() public {
+        Safu safu = new Safu(
+            defaultBountyCap,
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
+            true,
+            false,
+            address(this)
+        );
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id = safu.deposit(erc20, 2_000);
+        assertBounty(safu, id, 1000, false);
+
+        // cannot claim since not approved 
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        vm.warp(block.timestamp + defaultDenialWindow + 1);
+
+        // can no longer deny receipt
+        vm.expectRevert();
+        safu.denyBounty(id);
+
+        // now can claim since auto approved after denial window passed
+        assertBounty(safu, id, 1000, true);
+        prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 1000);
+
+        // confirm receipt gets deleted
+        vm.expectRevert();
+        safu.getReceipt(id);
+    }
+
+    function testMaxDelay() public {
+        SafuLike safu = new Safu(
+            defaultBountyCap,
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
+            true,
+            false,
+            address(this)
+        );
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id = safu.deposit(erc20, 2_000);
+        assertBounty(safu, id, 1000, false);
+
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 0);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        vm.warp(block.timestamp + defaultDenialWindow + defaultMaxDelay);
+
+        prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 2000);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 2000);
+    }
+
+    function testWithdraw() public {
+        SafuLike safu = new Safu(
+            defaultBountyCap,
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
+            true,
+            false,
+            address(this)
+        );
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id = safu.deposit(erc20, 1_000);
+
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 0);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        safu.approveBounty(id);
+
+        prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 500);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
+
+        prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 0);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        id = safu.deposit(erc20, 2_000);
+        prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 0);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        safu.denyBounty(id);
+
+        prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 2000);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 2000);
     }
 
     function assertBounty(
-        SimpleSafu safu,
+        SafuLike safu,
         uint64 id,
         uint256 expectedAmt,
         bool expectedApproved
