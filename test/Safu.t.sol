@@ -178,7 +178,7 @@ contract SafuTest is Test {
         uint64 id = safu.deposit(erc20, 2_000);
         assertBounty(safu, id, 1000, false);
 
-        // cannot claim since not approved 
+        // cannot claim since not approved
         uint256 prev = IERC20(erc20).balanceOf(address(this));
         safu.claim();
         assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
@@ -264,6 +264,36 @@ contract SafuTest is Test {
         prev = IERC20(erc20).balanceOf(address(this));
         assertEq(safu.withdrawToken(erc20), 2000);
         assertEq(IERC20(erc20).balanceOf(address(this)), prev + 2000);
+    }
+
+    function testWithdrawAfterClaim() public {
+        SafuLike safu = new Safu(
+            defaultBountyCap,
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultDenialWindow,
+            defaultBountyPercent,
+            true,
+            false,
+            address(this)
+        );
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id = safu.deposit(erc20, 1_000);
+
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 0);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        safu.approveBounty(id);
+
+        assertBounty(safu, id, 500, true);
+        prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
+
+        prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 500);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
     }
 
     function assertBounty(

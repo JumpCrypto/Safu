@@ -153,7 +153,6 @@ contract Safu is SafuLike {
         setReceipt(receipt);
     }
 
-    
     // Deny bounty deletes receipt and
     // allow remaining un-withdrawn deposit to be withdrawn
     function denyBounty(uint64 id) external {
@@ -194,6 +193,11 @@ contract Safu is SafuLike {
                 // if claimed amount is less than approved bountyAmt,
                 // adjust outstanding approvals
                 tokenInfo.approved -= receipt.bounty - bountyAmt;
+                // ensure no funds get trapped in contract
+                tokenInfo.closedReceiptsToWithdraw +=
+                    receipt.deposited -
+                    receipt.authorityWithdrawn -
+                    bountyAmt;
                 // do not delete entry during loop
                 toDelete[deleteIdx++] = receipt.id;
             }
