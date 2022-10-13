@@ -170,10 +170,6 @@ contract Safu is ISafu, Ownable {
         deleteReceipt(id);
     }
 
-    event Here(string);
-    event Here(bool);
-    event Here(uint256);
-
     // Claims all of sender's eligible bounties.
     function claim() external {
         if (!rewardsClaimable) {
@@ -184,12 +180,6 @@ contract Safu is ISafu, Ownable {
         uint256 deleteIdx = 0;
         for (uint256 i = 0; i < receipts.length; ++i) {
             Receipt memory receipt = idToReceipt[receipts[i]];
-            emit Here("");
-            emit Here(receipt.isApproved);
-            emit Here(receipt.depositBlockTime + minDelay <= block.timestamp);
-            emit Here(receipt.depositBlockTime);
-            emit Here(minDelay);
-            emit Here(block.timestamp);
             if (
                 receipt.isApproved &&
                 receipt.depositBlockTime + minDelay <= block.timestamp
