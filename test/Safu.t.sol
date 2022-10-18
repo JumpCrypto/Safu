@@ -37,20 +37,12 @@ contract SafuTest is Test {
             defaultMinDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         assertTrue(IERC20(erc20).approve(address(safu), 1_000));
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         uint64 id = safu.deposit(erc20, 1_000);
-        // todo: understand why this fails even though the output looks identical
-        // vm.expectEmit(true, false, false, true);
-        // emit Deposit(
-        //     address(this),
-        //     Safu.Receipt(0, erc20, 500, block.timestamp, false)
-        // );
-        assertEq(safu.getTokenToBountyCap(erc20), defaultBountyCap);
+        assertEq(safu.getBountyCapForToken(erc20), defaultBountyCap);
         assertBounty(safu, id, 500, false);
 
         safu.approveBounty(id);
@@ -66,9 +58,7 @@ contract SafuTest is Test {
             defaultMinDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));
@@ -105,9 +95,7 @@ contract SafuTest is Test {
             defaultMinDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));
@@ -135,9 +123,7 @@ contract SafuTest is Test {
             minDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));
@@ -163,9 +149,7 @@ contract SafuTest is Test {
             defaultMinDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));
@@ -184,39 +168,48 @@ contract SafuTest is Test {
     }
 
     function testWithdraw() public {
+        uint256 minDelay = 5;
         ISafu safu = new Safu(
-            defaultMinDelay,
+            minDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));
         uint64 id = safu.deposit(erc20, 1_000);
 
+        // cannot withdraw before approval
         uint256 prev = IERC20(erc20).balanceOf(address(this));
         assertEq(safu.withdrawToken(erc20), 0);
         assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
 
         safu.approveBounty(id);
 
+        // cannot withdraw until after minDelay
+        prev = IERC20(erc20).balanceOf(address(this));
+        assertEq(safu.withdrawToken(erc20), 0);
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
+
+        vm.warp(block.timestamp + minDelay);
+
+        // now can withdraw
         prev = IERC20(erc20).balanceOf(address(this));
         assertEq(safu.withdrawToken(erc20), 500);
         assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
 
+        // no double withdraw
+        prev = IERC20(erc20).balanceOf(address(this));
         prev = IERC20(erc20).balanceOf(address(this));
         assertEq(safu.withdrawToken(erc20), 0);
         assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
 
+        // second deposit
         id = safu.deposit(erc20, 2_000);
-        prev = IERC20(erc20).balanceOf(address(this));
-        assertEq(safu.withdrawToken(erc20), 0);
-        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 0);
 
         safu.denyBounty(id);
 
+        // no warp needed to withdraw denied bounty
         prev = IERC20(erc20).balanceOf(address(this));
         assertEq(safu.withdrawToken(erc20), 2000);
         assertEq(IERC20(erc20).balanceOf(address(this)), prev + 2000);
@@ -227,9 +220,7 @@ contract SafuTest is Test {
             defaultMinDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));
@@ -251,14 +242,32 @@ contract SafuTest is Test {
         assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
     }
 
+    function testAutoApprove() public {
+        ISafu safu = new Safu(5, defaultMaxDelay, defaultBountyPercent, true);
+
+        assertTrue(IERC20(erc20).approve(address(safu), 1_000));
+        safu.increaseBountyCapForToken(erc20, defaultBountyCap);
+        uint64 id = safu.deposit(erc20, 1_000);
+        assertEq(safu.getBountyCapForToken(erc20), defaultBountyCap);
+        assertBounty(safu, id, 500, true);
+
+        uint256 prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev);
+
+        vm.warp(block.timestamp + 5);
+
+        prev = IERC20(erc20).balanceOf(address(this));
+        safu.claim();
+        assertEq(IERC20(erc20).balanceOf(address(this)), prev + 500);
+    }
+
     function testShutdown() public {
         ISafu safu = new Safu(
             defaultMinDelay,
             defaultMaxDelay,
             defaultBountyPercent,
-            true,
-            false,
-            address(this)
+            false
         );
         safu.increaseBountyCapForToken(erc20, defaultBountyCap);
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));

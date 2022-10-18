@@ -1,43 +1,10 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
+
+import "./ISafu.sol";
 
 import "openzeppelin/token/ERC20/IERC20.sol";
 import "openzeppelin/access/Ownable.sol";
-
-interface ISafu {
-    // Record that white-hat has deposited funds.
-    function deposit(address erc20, uint256 wad) external returns (uint64);
-
-    // Claims all of sender's eligible bounties.
-    function claim() external;
-
-    // Bounty amount and approval status for a given deposit id
-    function bounty(uint64 id) external returns (uint256 amt, bool approved);
-
-    /*****************************/
-    /* Authority only operations */
-    /*****************************/
-
-    // Withdraw deposited funds to authority for given token
-    function withdrawToken(address token) external returns (uint256);
-
-    // Withdraw funds for all tokens
-    function withdraw() external;
-
-    // Approve bounty for deposit id
-    function approveBounty(uint64 id) external;
-
-    // Deny bounty for deposit id
-    function denyBounty(uint64 id) external;
-
-    // Increase the bounty cap for specified token. Bounty caps can only go up
-    function increaseBountyCapForToken(address token, uint256 increase)
-        external
-        returns (uint256);
-
-    // Prevent new deposits. Useful when migrating to a new contract to prevent accidental deposits
-    function shutdown() external;
-}
 
 contract Safu is ISafu, Ownable {
     struct Receipt {
@@ -74,9 +41,6 @@ contract Safu is ISafu, Ownable {
     mapping(address => uint64[]) public depositorToReceipts;
     mapping(address => TokenInfo) public tokenInfos;
 
-    // To enable multi-sig or governance, have that wallet be the
-    // authority indirectly
-    address public authority;
     uint64 nextId = 0;
     // Minimum elapsed time before deposit can be claimed.
     // This gives a window after an incident for all potential depositors to
@@ -92,8 +56,6 @@ contract Safu is ISafu, Ownable {
     // than bountyPercent.
     uint8 public immutable bountyPercent;
 
-    // Flag must be true for depositors to claim rewards
-    bool public rewardsClaimable;
     // If true, deposits automatically approved with no action necessary by authority
     bool public autoApprove;
     // If true, prevents new deposits. Cannot be undone
@@ -107,16 +69,13 @@ contract Safu is ISafu, Ownable {
         uint256 _minDelay,
         uint256 _maxDelay,
         uint8 _bountyPercent,
-        bool _rewardsClaimable,
-        bool _autoApprove,
-        address _authority
+        bool _autoApprove
     ) {
         minDelay = _minDelay;
         maxDelay = _maxDelay;
         bountyPercent = _bountyPercent;
-        rewardsClaimable = _rewardsClaimable;
         autoApprove = _autoApprove;
-        authority = _authority;
+        require(_minDelay <= _maxDelay, "Safu/min-delay-leq-max-delay");
     }
 
     function withdraw() external onlyOwner {
@@ -131,11 +90,16 @@ contract Safu is ISafu, Ownable {
         for (uint256 i = 0; i < tokenInfo.receiptIds.length; ++i) {
             Receipt storage receipt = idToReceipt[tokenInfo.receiptIds[i]];
             if (receipt.depositBlockTime + maxDelay <= block.timestamp) {
+                // withdraw all if after max delay
                 uint256 toWithdraw = receipt.deposited -
                     receipt.authorityWithdrawn;
                 withdrawable += toWithdraw;
                 receipt.authorityWithdrawn += toWithdraw;
-            } else if (receipt.isApproved) {
+            } else if (
+                receipt.isApproved &&
+                receipt.depositBlockTime + minDelay <= block.timestamp
+            ) {
+                // withdraw all but bounty if approved and after min delay
                 uint256 toWithdraw = receipt.deposited -
                     receipt.bounty -
                     receipt.authorityWithdrawn;
@@ -144,7 +108,7 @@ contract Safu is ISafu, Ownable {
             }
         }
 
-        IERC20(token).transfer(authority, withdrawable);
+        IERC20(token).transfer(owner(), withdrawable);
         emit Withdraw(token, withdrawable);
         return withdrawable;
     }
@@ -172,9 +136,6 @@ contract Safu is ISafu, Ownable {
 
     // Claims all of sender's eligible bounties.
     function claim() external {
-        if (!rewardsClaimable) {
-            return;
-        }
         uint64[] storage receipts = depositorToReceipts[msg.sender];
         uint64[] memory toDelete = new uint64[](receipts.length);
         uint256 deleteIdx = 0;
@@ -223,6 +184,10 @@ contract Safu is ISafu, Ownable {
             block.timestamp,
             autoApprove
         );
+        if (autoApprove) {
+            tokenInfos[receipt.token].approved += receipt.bounty;
+        }
+        
         emit Deposit(msg.sender, receipt);
         createReceipt(msg.sender, receipt);
         return receipt.id;
@@ -234,7 +199,7 @@ contract Safu is ISafu, Ownable {
         returns (uint256, bool)
     {
         TokenInfo memory tokenInfo = tokenInfos[receipt.token];
-        uint256 cap = getTokenToBountyCap(receipt.token);
+        uint256 cap = getBountyCapForToken(receipt.token);
         bool isApproved = receipt.isApproved;
         if (cap == 0) {
             return (0, isApproved);
@@ -302,16 +267,8 @@ contract Safu is ISafu, Ownable {
         idToReceipt[receipt.id] = receipt;
     }
 
-    function getTokenToBountyCap(address token) public view returns (uint256) {
+    function getBountyCapForToken(address token) public view returns (uint256) {
         return tokenInfos[token].bountyCap;
-    }
-
-    function changeAuthority(address newAuthority) public onlyOwner {
-        authority = newAuthority;
-    }
-
-    function setRewardsClaimable(bool _rewardsClaimable) public onlyOwner {
-        rewardsClaimable = _rewardsClaimable;
     }
 
     function setAutoApprove(bool _autoApprove) public onlyOwner {
