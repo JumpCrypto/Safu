@@ -173,10 +173,11 @@ contract Safu is ISafu, Ownable {
         ) {
             return 0;
         }
+        require(msg.sender == receipt.depositor, "Safu/only-depositor-can-claim-bounty");
         TokenInfo storage tokenInfo = tokenInfos[receipt.token];
         (uint256 bountyAmt, ) = bounty(receipt);
-        emit Claim(msg.sender, receipt, bountyAmt);
-        IERC20(receipt.token).transfer(msg.sender, bountyAmt);
+        emit Claim(receipt.depositor, receipt, bountyAmt);
+        IERC20(receipt.token).transfer(receipt.depositor, bountyAmt);
         tokenInfo.claimed += bountyAmt;
         // if claimed amount is less than approved bountyAmt,
         // adjust outstanding approvals

@@ -7,6 +7,9 @@ interface ISafu {
 
     // Claims all of sender's eligible bounties.
     function claim() external;
+    
+    // Attempts to claim particular receiptId. Returns amount claimed
+    function claim(uint64 id) external returns (uint256);
 
     // Bounty amount and approval status for a given deposit id
     function bounty(uint64 id) external returns (uint256 amt, bool approved);
