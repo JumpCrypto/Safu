@@ -351,7 +351,7 @@ contract Safu is ISafu, Ownable {
     }
 
     modifier notDepositsDisabled() {
-        require(!areDepositsDisabled, "Safu/contract-shudown");
+        require(!areDepositsDisabled, "Safu/deposits-disabled");
         _;
     }
 

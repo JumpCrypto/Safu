@@ -364,7 +364,7 @@ contract SafuTest is Test {
         uint64 id0 = safu.deposit(erc20, 1_000);
         uint64 id1 = safu.deposit(erc20, 1_000);
         uint64 id2 = safu.deposit(erc20, 1_000);
-        uint64 id3 =  safu.deposit(erc20, 1_000);
+        uint64 id3 = safu.deposit(erc20, 1_000);
         uint64 id4 = safu.deposit(erc20, 1_000);
 
         safu.approveBounty(id0);
@@ -374,7 +374,10 @@ contract SafuTest is Test {
 
         uint256 prev = IERC20(erc20).balanceOf(address(this));
         safu.claim();
-        assertEq(IERC20(erc20).balanceOf(address(this)), prev + defaultBountyCap);
+        assertEq(
+            IERC20(erc20).balanceOf(address(this)),
+            prev + defaultBountyCap
+        );
 
         safu.increaseBountyCapForToken(erc20, 500);
 
@@ -395,8 +398,37 @@ contract SafuTest is Test {
         assertTrue(IERC20(erc20).approve(address(safu), 10_000));
         safu.disableDeposits();
 
-        vm.expectRevert();
+        vm.expectRevert("Safu/deposits-disabled");
         safu.deposit(erc20, 1_000);
+    }
+
+    function testInvalidConstructorArgs() public {
+        vm.expectRevert("Safu/min-delay-leq-max-delay");
+        new Safu(10, 5, 0, false);
+
+        vm.expectRevert("Safu/bounty-percent-must-be-in-range[0,100]");
+        new Safu(0, 5, 101, false);
+    }
+
+    function testBountyCapOverflow() public {
+        ISafu safu = new Safu(
+            defaultMinDelay,
+            defaultMaxDelay,
+            defaultBountyPercent,
+            false
+        );
+
+        vm.expectRevert();
+        safu.increaseBountyCapForToken(erc20, 2**255);
+
+        safu.increaseBountyCapForToken(erc20, uint256(2**255) / 1000);
+
+        assertTrue(IERC20(erc20).approve(address(safu), 10_000));
+        uint64 id = safu.deposit(erc20, 10_000);
+
+        safu.approveBounty(id);
+        assertBounty(safu, id, 5000, true);
+        assertEq(safu.claim(id), 5000);
     }
 
     function assertBounty(
