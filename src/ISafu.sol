@@ -36,5 +36,5 @@ interface ISafu {
         returns (uint256);
 
     // Prevent new deposits. Useful when migrating to a new contract to prevent accidental deposits
-    function shutdown() external;
+    function disableDeposits() external;
 }

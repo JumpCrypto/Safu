@@ -78,6 +78,10 @@ contract Safu is ISafu, Ownable {
         bountyPercent = _bountyPercent;
         autoApprove = _autoApprove;
         require(_minDelay <= _maxDelay, "Safu/min-delay-leq-max-delay");
+        require(
+            _bountyPercent >= 0 && _bountyPercent <= 100,
+            "Safu/bounty-percent-must-be-in-range[0,100]"
+        );
     }
 
     function withdraw() external onlyOwner {
@@ -148,37 +152,44 @@ contract Safu is ISafu, Ownable {
         deleteReceipt(id);
     }
 
+    event Log(uint256);
+
     // Claims all of sender's eligible bounties.
     function claim() external {
+        // Keep this as "memory" to avoid modifications caused by deleting receipts in loop
         uint64[] memory receipts = depositorToReceipts[msg.sender];
-        uint64[] memory toDelete = new uint64[](receipts.length);
-        uint256 deleteIdx = 0;
         for (uint256 i = 0; i < receipts.length; ++i) {
-            Receipt memory receipt = idToReceipt[receipts[i]];
-            if (
-                receipt.isApproved &&
-                receipt.depositBlockTime + minDelay <= block.timestamp
-            ) {
-                TokenInfo storage tokenInfo = tokenInfos[receipt.token];
-                (uint256 bountyAmt, ) = bounty(receipt);
-                emit Claim(msg.sender, receipt, bountyAmt);
-                IERC20(receipt.token).transfer(msg.sender, bountyAmt);
-                tokenInfo.claimed += bountyAmt;
-                // if claimed amount is less than approved bountyAmt,
-                // adjust outstanding approvals
-                tokenInfo.approved -= receipt.bounty - bountyAmt;
-                // ensure no funds get trapped in contract
-                tokenInfo.closedReceiptsToWithdraw +=
-                    receipt.deposited -
-                    receipt.authorityWithdrawn -
-                    bountyAmt;
-                // do not delete entry during loop
-                toDelete[deleteIdx++] = receipt.id;
-            }
+            emit Log(receipts.length);
+            claim(receipts[i]);
         }
-        for (uint256 i = 0; i < deleteIdx; ++i) {
-            deleteReceipt(toDelete[i]);
+    }
+
+    // Attempts to claim a given receipt id, returns amount claimed or 0 if not claimable at this time
+    function claim(uint64 id) public returns (uint256) {
+        Receipt memory receipt = idToReceipt[id];
+        if (
+            !receipt.isApproved ||
+            receipt.depositBlockTime + minDelay > block.timestamp
+        ) {
+            return 0;
         }
+        TokenInfo storage tokenInfo = tokenInfos[receipt.token];
+        (uint256 bountyAmt, ) = bounty(receipt);
+        emit Claim(msg.sender, receipt, bountyAmt);
+        IERC20(receipt.token).transfer(msg.sender, bountyAmt);
+        tokenInfo.claimed += bountyAmt;
+        // if claimed amount is less than approved bountyAmt,
+        // adjust outstanding approvals
+        tokenInfo.approved -= receipt.bounty - bountyAmt;
+        // ensure no funds get trapped in contract
+        tokenInfo.closedReceiptsToWithdraw +=
+            receipt.deposited -
+            receipt.authorityWithdrawn -
+            bountyAmt;
+
+        deleteReceipt(id);
+
+        return bountyAmt;
     }
 
     function deposit(address erc20, uint256 wad)
@@ -226,17 +237,16 @@ contract Safu is ISafu, Ownable {
             // enough bounty to go around, so pay out in full
             return (receipt.bounty, receipt.isApproved);
         }
-        /*
-         * claimed <= approved (generally true)
-         * claimed <= cap
-         * cap < approved (bc if statement)
-         * => claimed < approved
-         * => totalClaimable > 0
-         * => ratio defined
-         */
+        // Note the definition of approved in the tokenInfo struct. If approvals are greater than the cap with multiple parties, each party gets a pro-rata share of the remaining bounty cap
+        // *unaffected* by the ordering of claims
         uint256 totalClaimable = tokenInfo.approved - tokenInfo.claimed;
         uint256 capRemaining = cap - tokenInfo.claimed;
         // not enough bounty to fully pay all receipts, so scale bounty fairly
+        /*
+         * claimed <= approved and claimed <= cap (generally true)
+         * cap < approved (bc if statement)
+         * => claimed < approved => totalClaimable > 0 => ratio defined
+         */
         uint256 ratio = (capRemaining * 1000) / totalClaimable;
         uint256 share = (receipt.bounty * ratio) / 1000;
         return (share, receipt.isApproved);
@@ -267,15 +277,17 @@ contract Safu is ISafu, Ownable {
         uint64[] storage tokenReceipts = tokenInfos[token].receiptIds;
         for (uint256 i = 0; i < tokenReceipts.length; ++i) {
             if (tokenReceipts[i] == id) {
-                delete tokenReceipts[i];
-                return;
+                tokenReceipts[i] = tokenReceipts[tokenReceipts.length - 1];
+                tokenReceipts.pop();
+                break;
             }
         }
         uint64[] storage depostorReceipts = depositorToReceipts[depositor];
         for (uint256 i = 0; i < depostorReceipts.length; ++i) {
             if (depostorReceipts[i] == id) {
-                delete depostorReceipts[i];
-                return;
+                depostorReceipts[i] = depostorReceipts[depostorReceipts.length - 1];
+                depostorReceipts.pop();
+                break;
             }
         }
     }
@@ -315,6 +327,11 @@ contract Safu is ISafu, Ownable {
         returns (uint256)
     {
         tokenInfos[token].bountyCap += increase;
+        // cap is multiplied by 1000 when calculating bounty, ensure it does not overflow
+        require(
+            tokenInfos[token].bountyCap * 1000 > increase,
+            "Safu/bounty-cap-times-1000-doesnt-overflow"
+        );
         return tokenInfos[token].bountyCap;
     }
 
@@ -337,7 +354,7 @@ contract Safu is ISafu, Ownable {
         _;
     }
 
-    function depositsDisabled() external onlyOwner {
+    function disableDeposits() external onlyOwner {
         areDepositsDisabled = true;
     }
 }
